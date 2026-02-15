@@ -170,7 +170,7 @@ public class SupabaseAuthService {
     }
 
     /**
-     * Exchanges a one-time auth code (from OAuth callback) for session tokens.
+     * Exchanges a one time auth code (from OAuth callback) for session tokens.
      *
      * @param code the authorization code from the OAuth callback
      * @return the auth response containing tokens
