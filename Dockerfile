@@ -2,6 +2,11 @@
 FROM eclipse-temurin:21-jdk AS build
 WORKDIR /app
 
+ARG GITHUB_ACTOR
+ARG GITHUB_TOKEN
+ENV GITHUB_ACTOR=${GITHUB_ACTOR}
+ENV GITHUB_TOKEN=${GITHUB_TOKEN}
+
 COPY gradlew .
 COPY gradle gradle
 COPY build.gradle settings.gradle ./

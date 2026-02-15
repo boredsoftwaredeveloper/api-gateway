@@ -65,6 +65,36 @@ spring:
                     name: regretCircuitBreaker
                     fallbackUri: forward:/fallback/regret
 
+            # ── OpenAPI doc routes (for Swagger UI aggregation) ──────
+            - id: profile-service-api-docs
+              uri: ${PROFILE_SERVICE_URL:http://localhost:8081}
+              predicates:
+                - Path=/services/profile/api-docs/**
+              filters:
+                - RewritePath=/services/profile/api-docs(?<segment>/?.*), /api-docs${segment}
+
+            - id: stream-service-api-docs
+              uri: ${REGRET_STREAM_URL:http://localhost:8082}
+              predicates:
+                - Path=/services/stream/api-docs/**
+              filters:
+                - RewritePath=/services/stream/api-docs(?<segment>/?.*), /api-docs${segment}
+
+# ── Springdoc (aggregated Swagger UI) ──────────────────────────────
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
+    path: /swagger-ui.html
+    urls:
+      - name: API Gateway
+        url: /v3/api-docs
+      - name: Profile Service
+        url: /services/profile/api-docs
+      - name: Stream Service
+        url: /services/stream/api-docs
+
 # ── Supabase Auth ──────────────────────────────────────────────────
 supabase:
   url: ${SUPABASE_URL}

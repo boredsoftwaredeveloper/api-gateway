@@ -21,6 +21,14 @@ ext {
 
 repositories {
     mavenCentral()
+    maven {
+        name = 'GitHubPackages'
+        url = uri('https://maven.pkg.github.com/boredsoftwaredeveloper/common-lib')
+        credentials {
+            username = System.getenv('GITHUB_ACTOR')
+            password = System.getenv('GITHUB_TOKEN')
+        }
+    }
 }
 
 dependencyManagement {
@@ -31,7 +39,7 @@ dependencyManagement {
 
 dependencies {
     // Common library
-    implementation 'dev.bored:common-lib'
+    implementation 'dev.bored:common-lib:0.0.1'
 
     // Spring Cloud Gateway (reactive — uses Netty, not Tomcat)
     implementation 'org.springframework.cloud:spring-cloud-starter-gateway-server-webflux'
@@ -53,6 +61,9 @@ dependencies {
     implementation 'org.flywaydb:flyway-core'
     implementation 'org.flywaydb:flyway-database-postgresql'
     runtimeOnly 'org.postgresql:postgresql'
+
+    // OpenAPI (Swagger UI — aggregates docs from all services)
+    implementation 'org.springdoc:springdoc-openapi-starter-webflux-ui:2.8.0'
 
     // Resilience4j (circuit breaker for gateway routes)
     implementation 'org.springframework.cloud:spring-cloud-starter-circuitbreaker-reactor-resilience4j'

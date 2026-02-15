@@ -9,6 +9,7 @@ on:
 permissions:
   id-token: write
   contents: read
+  packages: read
 
 jobs:
   build:
@@ -24,6 +25,9 @@ jobs:
 
       - run: chmod +x gradlew
       - run: ./gradlew clean check
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   deploy:
     needs: build
@@ -47,7 +51,10 @@ jobs:
 
       - name: Build Docker image
         run: |
-          docker build -t us-central1-docker.pkg.dev/boredsoftwaredeveloper/backend/api-gateway:${{ github.sha }} .
+          docker build \
+            --build-arg GITHUB_ACTOR=${{ github.actor }} \
+            --build-arg GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }} \
+            -t us-central1-docker.pkg.dev/boredsoftwaredeveloper/backend/api-gateway:${{ github.sha }} .
 
       - name: Push Docker image
         run: |
