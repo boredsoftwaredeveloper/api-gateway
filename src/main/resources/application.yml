@@ -18,50 +18,52 @@ spring:
 
   cloud:
     gateway:
-      # ── Global defaults ──────────────────────────────────────────
-      default-filters:
-        - DedupeResponseHeader=Access-Control-Allow-Origin Access-Control-Allow-Credentials, RETAIN_FIRST
+      server:
+        webflux:
+          # ── Global defaults ──────────────────────────────────────────
+          default-filters:
+            - DedupeResponseHeader=Access-Control-Allow-Origin Access-Control-Allow-Credentials, RETAIN_FIRST
 
-      globalcors:
-        cors-configurations:
-          '[/**]':
-            allowed-origins:
-              - "http://localhost:4200"
-              - "https://boredsoftwaredeveloper.xyz"
-              - "https://www.boredsoftwaredeveloper.xyz"
-            allowed-methods:
-              - GET
-              - POST
-              - PUT
-              - DELETE
-              - OPTIONS
-            allowed-headers: "*"
-            allow-credentials: true
-            max-age: 3600
+          globalcors:
+            cors-configurations:
+              '[/**]':
+                allowed-origins:
+                  - "http://localhost:4200"
+                  - "https://boredsoftwaredeveloper.xyz"
+                  - "https://www.boredsoftwaredeveloper.xyz"
+                allowed-methods:
+                  - GET
+                  - POST
+                  - PUT
+                  - DELETE
+                  - OPTIONS
+                allowed-headers: "*"
+                allow-credentials: true
+                max-age: 3600
 
-      # ── Route definitions (static — no Eureka needed) ───────────
-      routes:
-        # Profile Service routes
-        - id: profile-service
-          uri: ${PROFILE_SERVICE_URL:http://localhost:8081}
-          predicates:
-            - Path=/api/v1/profiles/**,/api/v1/experiences/**,/api/v1/achievements/**,/api/v1/aspirations/**
-          filters:
-            - name: CircuitBreaker
-              args:
-                name: profileCircuitBreaker
-                fallbackUri: forward:/fallback/profile
+          # ── Route definitions (static — no Eureka needed) ───────────
+          routes:
+            # Profile Service routes
+            - id: profile-service
+              uri: ${PROFILE_SERVICE_URL:http://localhost:8081}
+              predicates:
+                - Path=/api/v1/profiles/**,/api/v1/experiences/**,/api/v1/achievements/**,/api/v1/aspirations/**
+              filters:
+                - name: CircuitBreaker
+                  args:
+                    name: profileCircuitBreaker
+                    fallbackUri: forward:/fallback/profile
 
-        # Regret Stream Service routes
-        - id: regret-stream-service
-          uri: ${REGRET_STREAM_URL:http://localhost:8082}
-          predicates:
-            - Path=/api/v1/feed/**
-          filters:
-            - name: CircuitBreaker
-              args:
-                name: regretCircuitBreaker
-                fallbackUri: forward:/fallback/regret
+            # Regret Stream Service routes
+            - id: regret-stream-service
+              uri: ${REGRET_STREAM_URL:http://localhost:8082}
+              predicates:
+                - Path=/api/v1/feed/**
+              filters:
+                - name: CircuitBreaker
+                  args:
+                    name: regretCircuitBreaker
+                    fallbackUri: forward:/fallback/regret
 
 # ── Supabase Auth ──────────────────────────────────────────────────
 supabase:
