@@ -7,6 +7,8 @@ import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
+import org.springframework.web.bind.support.WebExchangeBindException;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
@@ -37,13 +39,14 @@ public class GatewayExceptionHandler implements ErrorWebExceptionHandler {
                 exchange.getRequest().getURI().getPath(),
                 ex.getMessage(), ex);
 
-        HttpStatus status = HttpStatus.INTERNAL_SERVER_ERROR;
+        HttpStatus status = resolveStatus(ex);
+        String message = resolveMessage(ex);
         String path = exchange.getRequest().getURI().getPath();
         String body = String.format(
                 "{\"status\":%d,\"error\":\"%s\",\"message\":\"%s\",\"timestamp\":\"%s\",\"path\":\"%s\"}",
                 status.value(),
                 status.getReasonPhrase(),
-                escapeJson(ex.getMessage()),
+                escapeJson(message),
                 Instant.now().toString(),
                 escapeJson(path)
         );
@@ -54,6 +57,29 @@ public class GatewayExceptionHandler implements ErrorWebExceptionHandler {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
         var buffer = exchange.getResponse().bufferFactory().wrap(bytes);
         return exchange.getResponse().writeWith(Mono.just(buffer));
+    }
+
+    private HttpStatus resolveStatus(Throwable ex) {
+        if (ex instanceof WebExchangeBindException) {
+            return HttpStatus.BAD_REQUEST;
+        }
+        if (ex instanceof ResponseStatusException rse) {
+            return HttpStatus.valueOf(rse.getStatusCode().value());
+        }
+        return HttpStatus.INTERNAL_SERVER_ERROR;
+    }
+
+    private String resolveMessage(Throwable ex) {
+        if (ex instanceof WebExchangeBindException webe) {
+            return webe.getFieldErrors().stream()
+                    .map(fe -> fe.getField() + ": " + fe.getDefaultMessage())
+                    .reduce((a, b) -> a + "; " + b)
+                    .orElse("Validation failed");
+        }
+        if (ex instanceof ResponseStatusException rse) {
+            return rse.getReason() != null ? rse.getReason() : rse.getMessage();
+        }
+        return ex.getMessage();
     }
 
     private String escapeJson(String value) {

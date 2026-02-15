@@ -5,6 +5,13 @@ spring:
   application:
     name: api-gateway
 
+# Test Supabase config
+supabase:
+  url: http://localhost:9999
+  anon-key: test-anon-key
+  jwt:
+    secret: test-secret-that-is-at-least-32-bytes-long
+
   cloud:
     gateway:
       globalcors:

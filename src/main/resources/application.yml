@@ -5,6 +5,13 @@ spring:
   application:
     name: api-gateway
 
+# ── Supabase Auth ──────────────────────────────────────────────────
+supabase:
+  url: ${SUPABASE_URL}
+  anon-key: ${SUPABASE_ANON_KEY}
+  jwt:
+    secret: ${SUPABASE_JWT_SECRET}
+
   cloud:
     gateway:
       # ── Global defaults ──────────────────────────────────────────

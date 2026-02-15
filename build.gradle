@@ -30,8 +30,20 @@ dependencyManagement {
 }
 
 dependencies {
+    // Common library
+    implementation 'dev.bored:common-lib'
+
     // Spring Cloud Gateway (reactive — uses Netty, not Tomcat)
     implementation 'org.springframework.cloud:spring-cloud-starter-gateway'
+
+    // Security (OAuth2 Resource Server — validates Supabase JWTs)
+    implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
+
+    // WebClient (used by SupabaseAuthService to call GoTrue API)
+    implementation 'org.springframework.boot:spring-boot-starter-webflux'
+
+    // Validation (request body validation)
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
 
     // Actuator (health check)
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
@@ -41,7 +53,9 @@ dependencies {
 
     // Testing
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springframework.security:spring-security-test'
     testImplementation 'io.projectreactor:reactor-test'
+    testImplementation 'com.squareup.okhttp3:mockwebserver:4.12.0'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
@@ -67,7 +81,8 @@ jacocoTestReport {
                 files(classDirectories.files.collect {
                     fileTree(dir: it, exclude: [
                             '**/*Application.class',
-                            '**/config/**'
+                            '**/config/**',
+                            '**/dto/**'
                     ])
                 })
         )
@@ -81,7 +96,8 @@ jacocoTestCoverageVerification {
 
             excludes = [
                     'dev.bored.gateway.ApiGatewayApplication',
-                    'dev.bored.gateway.config.*'
+                    'dev.bored.gateway.config.*',
+                    'dev.bored.gateway.dto.*'
             ]
 
             limit {
