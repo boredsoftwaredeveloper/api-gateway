@@ -34,7 +34,7 @@ dependencies {
     implementation 'dev.bored:common-lib'
 
     // Spring Cloud Gateway (reactive — uses Netty, not Tomcat)
-    implementation 'org.springframework.cloud:spring-cloud-starter-gateway'
+    implementation 'org.springframework.cloud:spring-cloud-starter-gateway-server-webflux'
 
     // Security (OAuth2 Resource Server — validates Supabase JWTs)
     implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
@@ -47,6 +47,12 @@ dependencies {
 
     // Actuator (health check)
     implementation 'org.springframework.boot:spring-boot-starter-actuator'
+
+    // Flyway (database migrations — centralised here for all services)
+    implementation 'org.springframework.boot:spring-boot-starter-jdbc'
+    implementation 'org.flywaydb:flyway-core'
+    implementation 'org.flywaydb:flyway-database-postgresql'
+    runtimeOnly 'org.postgresql:postgresql'
 
     // Resilience4j (circuit breaker for gateway routes)
     implementation 'org.springframework.cloud:spring-cloud-starter-circuitbreaker-reactor-resilience4j'
