@@ -10,13 +10,17 @@ RUN chmod +x gradlew
 
 # GitHub Packages credentials are mounted as BuildKit secrets so they
 # never land in the final image or its history.
-RUN --mount=type=secret,id=gh_actor,env=GITHUB_ACTOR \
-    --mount=type=secret,id=gh_token,env=GITHUB_TOKEN \
+RUN --mount=type=secret,id=gh_actor \
+    --mount=type=secret,id=gh_token \
+    GITHUB_ACTOR="$(cat /run/secrets/gh_actor)" \
+    GITHUB_TOKEN="$(cat /run/secrets/gh_token)" \
     ./gradlew dependencies --no-daemon
 
 COPY src src
-RUN --mount=type=secret,id=gh_actor,env=GITHUB_ACTOR \
-    --mount=type=secret,id=gh_token,env=GITHUB_TOKEN \
+RUN --mount=type=secret,id=gh_actor \
+    --mount=type=secret,id=gh_token \
+    GITHUB_ACTOR="$(cat /run/secrets/gh_actor)" \
+    GITHUB_TOKEN="$(cat /run/secrets/gh_token)" \
     ./gradlew clean bootJar -x test --no-daemon
 
 # ---------- Runtime stage ----------
