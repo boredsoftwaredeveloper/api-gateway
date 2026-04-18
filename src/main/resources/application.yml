@@ -1,16 +1,24 @@
 server:
   port: ${PORT:8080}
+  shutdown: graceful
 
 spring:
   application:
     name: api-gateway
 
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+
   # ── Database (used by Flyway only — gateway has no JPA) ──────────
   datasource:
-    url: jdbc:postgresql://db.zasidonntwaimayumbks.supabase.co:5432/postgres?sslmode=require
+    url: jdbc:postgresql://${SUPABASE_DB_HOST:db.zasidonntwaimayumbks.supabase.co}:${SUPABASE_DB_PORT:5432}/${SUPABASE_DB_NAME:postgres}?sslmode=require
     username: ${DB_USER}
     password: ${DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 2
+      minimum-idle: 0
+      connection-timeout: 10000
 
   flyway:
     enabled: true
@@ -24,22 +32,8 @@ spring:
           default-filters:
             - DedupeResponseHeader=Access-Control-Allow-Origin Access-Control-Allow-Credentials, RETAIN_FIRST
 
-          globalcors:
-            cors-configurations:
-              '[/**]':
-                allowed-origins:
-                  - "http://localhost:4200"
-                  - "https://boredsoftwaredeveloper.xyz"
-                  - "https://www.boredsoftwaredeveloper.xyz"
-                allowed-methods:
-                  - GET
-                  - POST
-                  - PUT
-                  - DELETE
-                  - OPTIONS
-                allowed-headers: "*"
-                allow-credentials: true
-                max-age: 3600
+          # CORS is configured once in Java (SecurityConfig#corsConfigurationSource)
+          # so local controllers (/auth/**) and proxied routes share the same policy.
 
           # ── Route definitions (static — no Eureka needed) ───────────
           routes:
@@ -96,21 +90,26 @@ springdoc:
         url: /services/stream/api-docs
 
 # ── Supabase Auth ──────────────────────────────────────────────────
+# Supabase signs JWTs with asymmetric ES256 keys; the gateway fetches the
+# public set from the project's JWKS endpoint and validates tokens against
+# it. Override SUPABASE_JWKS_URI directly if you need a non-standard path.
 supabase:
   url: ${SUPABASE_URL}
   anon-key: ${SUPABASE_ANON_KEY}
-  jwt:
-    secret: ${SUPABASE_JWT_SECRET}
+  jwks-uri: ${SUPABASE_JWKS_URI:${SUPABASE_URL}/auth/v1/.well-known/jwks.json}
 
 # ── Actuator ───────────────────────────────────────────────────────
+# Only expose health + info publicly. The `gateway` endpoint leaks the
+# entire route table and is kept disabled in prod; flip `include` to add
+# it back for local debugging if needed.
 management:
   endpoints:
     web:
       exposure:
-        include: health,info,gateway
+        include: health,info
   endpoint:
-    gateway:
-      access: UNRESTRICTED
+    health:
+      show-details: never
 
 # ── Resilience4j Circuit Breaker ───────────────────────────────────
 resilience4j:
@@ -134,7 +133,12 @@ resilience4j:
         timeout-duration: 5s
 
 # ── Logging ────────────────────────────────────────────────────────
+# LOG_FORMAT env var flips structured JSON on in Cloud Run (set LOG_FORMAT=ecs).
+# Left empty locally so dev logs stay human-readable.
 logging:
+  structured:
+    format:
+      console: ${LOG_FORMAT:}
   level:
     org.springframework.cloud.gateway: INFO
     io.github.resilience4j: INFO

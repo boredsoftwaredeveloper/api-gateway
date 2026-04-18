@@ -20,15 +20,23 @@ ext {
 }
 
 repositories {
+    // Local first — so `./gradlew publishToMavenLocal` in common-lib is picked up instantly.
+    mavenLocal()
     mavenCentral()
     maven {
         name = 'GitHubPackages'
         url = uri('https://maven.pkg.github.com/boredsoftwaredeveloper/common-lib')
         credentials {
-            username = System.getenv('GITHUB_ACTOR')
-            password = System.getenv('GITHUB_TOKEN')
+            username = System.getenv('GITHUB_ACTOR') ?: findProperty('gpr.user') ?: ''
+            password = System.getenv('GITHUB_TOKEN') ?: findProperty('gpr.key') ?: ''
         }
     }
+}
+
+// Always fetch the latest SNAPSHOT of common-lib (no cache).
+configurations.all {
+    resolutionStrategy.cacheChangingModulesFor 0, 'seconds'
+    resolutionStrategy.cacheDynamicVersionsFor 0, 'seconds'
 }
 
 dependencyManagement {
@@ -38,8 +46,8 @@ dependencyManagement {
 }
 
 dependencies {
-    // Common library
-    implementation 'dev.bored:common-lib:0.0.1'
+    // Common library (version pinned in gradle.properties)
+    implementation "dev.bored:common-lib:${commonLibVersion}"
 
     // Spring Cloud Gateway (reactive — uses Netty, not Tomcat)
     implementation 'org.springframework.cloud:spring-cloud-starter-gateway-server-webflux'

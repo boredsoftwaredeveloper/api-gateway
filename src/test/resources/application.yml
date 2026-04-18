@@ -41,12 +41,11 @@ spring:
               predicates:
                 - Path=/api/v1/feed/**
 
-# Test Supabase config
+# Test Supabase config — decoder is never invoked in tests (no real bearer tokens).
 supabase:
   url: http://localhost:9999
   anon-key: test-anon-key
-  jwt:
-    secret: test-secret-that-is-at-least-32-bytes-long
+  jwks-uri: http://localhost:0/.well-known/jwks.json
 
 # Disable Swagger in tests
 springdoc:

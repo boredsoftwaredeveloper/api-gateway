@@ -11,6 +11,14 @@ permissions:
   contents: read
   packages: read
 
+env:
+  GCP_PROJECT: boredsoftwaredev
+  GCP_PROJECT_NUMBER: "849094850972"
+  GCP_REGION: us-central1
+  AR_REPO: backend
+  SERVICE_NAME: api-gateway
+  RUNTIME_SA: cloud-run-runtime@boredsoftwaredev.iam.gserviceaccount.com
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -40,38 +48,51 @@ jobs:
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: projects/77695632782/locations/global/workloadIdentityPools/github/providers/github-provider
-          service_account: github-deployer@boredsoftwaredeveloper.iam.gserviceaccount.com
+          workload_identity_provider: projects/849094850972/locations/global/workloadIdentityPools/github/providers/github-provider
+          service_account: github-deployer@boredsoftwaredev.iam.gserviceaccount.com
 
       - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Configure Docker
-        run: gcloud auth configure-docker us-central1-docker.pkg.dev
+        run: gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev
 
       - name: Build Docker image
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DOCKER_BUILDKIT: "1"
         run: |
           docker build \
-            --build-arg GITHUB_ACTOR=${{ github.actor }} \
-            --build-arg GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }} \
-            -t us-central1-docker.pkg.dev/boredsoftwaredeveloper/backend/api-gateway:${{ github.sha }} .
+            --secret id=gh_actor,env=GITHUB_ACTOR \
+            --secret id=gh_token,env=GITHUB_TOKEN \
+            -t ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT }}/${{ env.AR_REPO }}/${{ env.SERVICE_NAME }}:${{ github.sha }} .
 
       - name: Push Docker image
         run: |
-          docker push us-central1-docker.pkg.dev/boredsoftwaredeveloper/backend/api-gateway:${{ github.sha }}
+          docker push ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT }}/${{ env.AR_REPO }}/${{ env.SERVICE_NAME }}:${{ github.sha }}
+
+      - name: Resolve downstream service URLs
+        id: urls
+        run: |
+          PROFILE_URL=$(gcloud run services describe profile-service --region=${{ env.GCP_REGION }} --format='value(status.url)')
+          REGRET_URL=$(gcloud run services describe stream-service --region=${{ env.GCP_REGION }} --format='value(status.url)')
+          echo "PROFILE_URL=$PROFILE_URL" >> $GITHUB_OUTPUT
+          echo "REGRET_URL=$REGRET_URL" >> $GITHUB_OUTPUT
 
       - name: Deploy to Cloud Run
         run: |
-          gcloud run deploy api-gateway \
-            --image us-central1-docker.pkg.dev/boredsoftwaredeveloper/backend/api-gateway:${{ github.sha }} \
-            --region us-central1 \
+          gcloud run deploy ${{ env.SERVICE_NAME }} \
+            --image ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT }}/${{ env.AR_REPO }}/${{ env.SERVICE_NAME }}:${{ github.sha }} \
+            --region ${{ env.GCP_REGION }} \
             --platform managed \
             --allow-unauthenticated \
+            --service-account=${{ env.RUNTIME_SA }} \
             --min-instances=0 \
-            --memory=512Mi \
+            --max-instances=2 \
+            --memory=1Gi \
             --cpu=1 \
-            --set-secrets SUPABASE_JWT_SECRET=SUPABASE_JWT_SECRET:latest \
-            --set-secrets DB_PASSWORD=DB_PASSWORD:latest \
-            --set-secrets DB_USER=DB_USER:latest \
-            --set-secrets SUPABASE_ANON_KEY=SUPABASE_ANON_KEY:latest \
-            --set-secrets SUPABASE_URL=SUPABASE_URL:latest
+            --concurrency=80 \
+            --timeout=60 \
+            --set-secrets=DB_USER=DB_USER:latest,DB_PASSWORD=DB_PASSWORD:latest,SUPABASE_URL=SUPABASE_URL:latest,SUPABASE_ANON_KEY=SUPABASE_ANON_KEY:latest \
+            --set-env-vars=LOG_FORMAT=ecs,PROFILE_SERVICE_URL=${{ steps.urls.outputs.PROFILE_URL }},REGRET_STREAM_URL=${{ steps.urls.outputs.REGRET_URL }}
