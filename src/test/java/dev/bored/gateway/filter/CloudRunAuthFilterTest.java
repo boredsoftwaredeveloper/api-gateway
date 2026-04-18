@@ -9,6 +9,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.web.server.MockServerWebExchange;
+import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
@@ -16,10 +17,8 @@ import java.net.URI;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -42,13 +41,16 @@ class CloudRunAuthFilterTest {
         return ex;
     }
 
-    private static GatewayFilterChain capturingChain(AtomicReference<MockServerWebExchange> captured) {
-        GatewayFilterChain chain = mock(GatewayFilterChain.class);
-        when(chain.filter(any())).thenAnswer(inv -> {
-            captured.set(inv.getArgument(0));
+    /** Plain GatewayFilterChain that records what it received (no Mockito). */
+    static final class CapturingChain implements GatewayFilterChain {
+        ServerWebExchange captured;
+        int calls;
+        @Override
+        public Mono<Void> filter(ServerWebExchange exchange) {
+            this.captured = exchange;
+            this.calls++;
             return Mono.empty();
-        });
-        return chain;
+        }
     }
 
     @Test
@@ -56,14 +58,13 @@ class CloudRunAuthFilterTest {
         CloudRunAuthFilter filter = new CloudRunAuthFilter(
                 audience -> { throw new AssertionError("fetcher should not be called when disabled"); },
                 false);
-
         MockServerWebExchange ex = exchangeWithRoute(PROFILE);
-        AtomicReference<MockServerWebExchange> captured = new AtomicReference<>();
+        CapturingChain chain = new CapturingChain();
 
-        StepVerifier.create(filter.filter(ex, capturingChain(captured))).verifyComplete();
+        StepVerifier.create(filter.filter(ex, chain)).verifyComplete();
 
-        assertThat(captured.get()).isSameAs(ex);
-        assertThat(ex.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION)).isNull();
+        assertThat(chain.captured).isSameAs(ex);
+        assertThat(chain.captured.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION)).isNull();
     }
 
     @Test
@@ -71,13 +72,12 @@ class CloudRunAuthFilterTest {
         CloudRunAuthFilter filter = new CloudRunAuthFilter(audience -> {
             throw new AssertionError("fetcher should not be called without a route");
         }, true);
-
         MockServerWebExchange ex = exchangeWithRoute(null);
-        AtomicReference<MockServerWebExchange> captured = new AtomicReference<>();
+        CapturingChain chain = new CapturingChain();
 
-        StepVerifier.create(filter.filter(ex, capturingChain(captured))).verifyComplete();
+        StepVerifier.create(filter.filter(ex, chain)).verifyComplete();
 
-        assertThat(captured.get()).isSameAs(ex);
+        assertThat(chain.captured).isSameAs(ex);
     }
 
     @Test
@@ -85,13 +85,12 @@ class CloudRunAuthFilterTest {
         CloudRunAuthFilter filter = new CloudRunAuthFilter(audience -> {
             throw new AssertionError("fetcher should not be called for non-run.app targets");
         }, true);
-
         MockServerWebExchange ex = exchangeWithRoute(LOCAL);
-        AtomicReference<MockServerWebExchange> captured = new AtomicReference<>();
+        CapturingChain chain = new CapturingChain();
 
-        StepVerifier.create(filter.filter(ex, capturingChain(captured))).verifyComplete();
+        StepVerifier.create(filter.filter(ex, chain)).verifyComplete();
 
-        assertThat(captured.get().getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION)).isNull();
+        assertThat(chain.captured.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION)).isNull();
     }
 
     @Test
@@ -100,14 +99,12 @@ class CloudRunAuthFilterTest {
                 audience -> Mono.just(new CloudRunAuthFilter.CachedToken(
                         "fake-token-for-" + audience, Instant.now().plus(Duration.ofMinutes(30)))),
                 true);
+        CapturingChain chain = new CapturingChain();
 
-        MockServerWebExchange ex = exchangeWithRoute(PROFILE);
-        AtomicReference<MockServerWebExchange> captured = new AtomicReference<>();
+        StepVerifier.create(filter.filter(exchangeWithRoute(PROFILE), chain)).verifyComplete();
 
-        StepVerifier.create(filter.filter(ex, capturingChain(captured))).verifyComplete();
-
-        String auth = captured.get().getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
-        assertThat(auth).isEqualTo("Bearer fake-token-for-" + PROFILE);
+        assertThat(chain.captured.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION))
+                .isEqualTo("Bearer fake-token-for-" + PROFILE);
     }
 
     @Test
@@ -118,15 +115,15 @@ class CloudRunAuthFilterTest {
             return Mono.just(new CloudRunAuthFilter.CachedToken(
                     "token-" + fetches.get(), Instant.now().plus(Duration.ofMinutes(30))));
         }, true);
+        CapturingChain first = new CapturingChain();
+        CapturingChain second = new CapturingChain();
 
-        AtomicReference<MockServerWebExchange> first = new AtomicReference<>();
-        AtomicReference<MockServerWebExchange> second = new AtomicReference<>();
-        StepVerifier.create(filter.filter(exchangeWithRoute(PROFILE), capturingChain(first))).verifyComplete();
-        StepVerifier.create(filter.filter(exchangeWithRoute(PROFILE), capturingChain(second))).verifyComplete();
+        StepVerifier.create(filter.filter(exchangeWithRoute(PROFILE), first)).verifyComplete();
+        StepVerifier.create(filter.filter(exchangeWithRoute(PROFILE), second)).verifyComplete();
 
         assertThat(fetches.get()).isEqualTo(1);
-        assertThat(first.get().getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION))
-                .isEqualTo(second.get().getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION));
+        assertThat(first.captured.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION))
+                .isEqualTo(second.captured.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION));
     }
 
     @Test
@@ -134,22 +131,22 @@ class CloudRunAuthFilterTest {
         AtomicInteger fetches = new AtomicInteger();
         CloudRunAuthFilter filter = new CloudRunAuthFilter(audience -> {
             int n = fetches.incrementAndGet();
-            // First token expires inside the 5-minute refresh buffer, second is fresh.
+            // First token expires inside the 5-minute refresh buffer; second is fresh.
             Instant expiry = n == 1
                     ? Instant.now().plus(Duration.ofSeconds(30))
                     : Instant.now().plus(Duration.ofMinutes(30));
             return Mono.just(new CloudRunAuthFilter.CachedToken("token-" + n, expiry));
         }, true);
+        CapturingChain first = new CapturingChain();
+        CapturingChain second = new CapturingChain();
 
-        AtomicReference<MockServerWebExchange> first = new AtomicReference<>();
-        AtomicReference<MockServerWebExchange> second = new AtomicReference<>();
-        StepVerifier.create(filter.filter(exchangeWithRoute(PROFILE), capturingChain(first))).verifyComplete();
-        StepVerifier.create(filter.filter(exchangeWithRoute(PROFILE), capturingChain(second))).verifyComplete();
+        StepVerifier.create(filter.filter(exchangeWithRoute(PROFILE), first)).verifyComplete();
+        StepVerifier.create(filter.filter(exchangeWithRoute(PROFILE), second)).verifyComplete();
 
         assertThat(fetches.get()).isEqualTo(2);
-        assertThat(first.get().getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION))
+        assertThat(first.captured.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION))
                 .isEqualTo("Bearer token-1");
-        assertThat(second.get().getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION))
+        assertThat(second.captured.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION))
                 .isEqualTo("Bearer token-2");
     }
 
@@ -158,14 +155,12 @@ class CloudRunAuthFilterTest {
         CloudRunAuthFilter filter = new CloudRunAuthFilter(
                 audience -> Mono.error(new RuntimeException("metadata server unreachable")),
                 true);
+        CapturingChain chain = new CapturingChain();
 
-        AtomicReference<MockServerWebExchange> captured = new AtomicReference<>();
-        StepVerifier.create(filter.filter(exchangeWithRoute(STREAM), capturingChain(captured)))
-                .verifyComplete();
+        StepVerifier.create(filter.filter(exchangeWithRoute(STREAM), chain)).verifyComplete();
 
-        // Filter fails open — chain is still called, Authorization header is absent.
-        assertThat(captured.get()).isNotNull();
-        assertThat(captured.get().getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION)).isNull();
+        assertThat(chain.captured).isNotNull();
+        assertThat(chain.captured.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION)).isNull();
     }
 
     @Test
@@ -196,5 +191,25 @@ class CloudRunAuthFilterTest {
     void getOrder_isBeforeNettyRoutingFilter() {
         CloudRunAuthFilter filter = new CloudRunAuthFilter(a -> Mono.empty(), true);
         assertThat(filter.getOrder()).isLessThan(Ordered.LOWEST_PRECEDENCE);
+    }
+
+    @Test
+    void extractExpiry_readsExpClaimFromJwt() {
+        // Hand-rolled minimal JWT: header.payload.sig — payload has exp=1_800_000_000.
+        String payload = java.util.Base64.getUrlEncoder().withoutPadding()
+                .encodeToString("{\"exp\":1800000000}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        String jwt = "header." + payload + ".sig";
+
+        assertThat(CloudRunAuthFilter.extractExpiry(jwt))
+                .isEqualTo(Instant.ofEpochSecond(1_800_000_000L));
+    }
+
+    @Test
+    void extractExpiry_fallsBackTo55MinutesOnMalformedToken() {
+        Instant now = Instant.now();
+        Instant result = CloudRunAuthFilter.extractExpiry("not-a-jwt");
+        // Should be roughly now + 55m.
+        assertThat(result).isAfter(now.plus(Duration.ofMinutes(50)));
+        assertThat(result).isBefore(now.plus(Duration.ofMinutes(60)));
     }
 }
