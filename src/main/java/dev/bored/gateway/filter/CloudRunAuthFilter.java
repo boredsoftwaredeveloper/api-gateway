@@ -1,10 +1,10 @@
 package dev.bored.gateway.filter;
 
-import com.google.auth.oauth2.GoogleCredentials;
-import com.google.auth.oauth2.IdTokenCredentials;
-import com.google.auth.oauth2.IdTokenProvider;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
@@ -12,16 +12,16 @@ import org.springframework.cloud.gateway.route.Route;
 import org.springframework.cloud.gateway.support.ServerWebExchangeUtils;
 import org.springframework.core.Ordered;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.stereotype.Component;
+import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
-import reactor.core.scheduler.Schedulers;
 
 import java.net.URI;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.Collections;
-import java.util.Date;
+import java.util.Base64;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -30,26 +30,35 @@ import java.util.concurrent.ConcurrentHashMap;
  * {@code --no-allow-unauthenticated} — Cloud Run's ingress layer validates the
  * token against the calling identity's {@code roles/run.invoker} binding.
  *
- * <p>The filter is a no-op outside Cloud Run (detected via the {@code K_SERVICE}
- * environment variable) so local {@code bootRun} keeps working without any
- * Google credentials.</p>
+ * <p>On Cloud Run we get tokens by hitting the instance metadata server
+ * ({@code http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity})
+ * which returns a JWT signed by Google for the audience we specify.</p>
  *
- * <p>Tokens are cached per audience (one audience per downstream service URL)
- * and refreshed a few minutes before expiry to avoid a refresh hop on every
- * request.</p>
+ * <p>The filter is a no-op outside Cloud Run (detected via the {@code K_SERVICE}
+ * environment variable) so local {@code bootRun} keeps working.</p>
+ *
+ * <p>Tokens are cached per audience and refreshed when fewer than 5 minutes
+ * remain before the {@code exp} claim.</p>
  */
 @Component
 public class CloudRunAuthFilter implements GlobalFilter, Ordered {
 
     private static final Logger log = LoggerFactory.getLogger(CloudRunAuthFilter.class);
 
-    /** Refresh buffer — refresh the token when fewer than this many seconds remain. */
+    /** Refresh buffer — refresh the token when fewer than this many minutes remain. */
     private static final Duration REFRESH_BUFFER = Duration.ofMinutes(5);
+
+    /** Metadata server URL template used to mint ID tokens. */
+    private static final String METADATA_URL =
+            "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity";
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final TokenFetcher tokenFetcher;
     private final boolean enabled;
     private final ConcurrentHashMap<String, CachedToken> cache = new ConcurrentHashMap<>();
 
+    @Autowired
     public CloudRunAuthFilter(@Value("${cloud-run-auth.enabled:#{null}}") Boolean explicitToggle,
                               @Value("${K_SERVICE:#{null}}") String kService) {
         this(defaultFetcher(), resolveEnabled(explicitToggle, kService));
@@ -85,10 +94,12 @@ public class CloudRunAuthFilter implements GlobalFilter, Ordered {
         }
 
         return fetchToken(audience)
-                .map(token -> exchange.mutate()
-                        .request(r -> r.headers(h -> h.set(HttpHeaders.AUTHORIZATION, "Bearer " + token)))
-                        .build())
-                .flatMap(chain::filter)
+                .flatMap(token -> {
+                    ServerHttpRequest mutated = exchange.getRequest().mutate()
+                            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                            .build();
+                    return chain.filter(exchange.mutate().request(mutated).build());
+                })
                 .onErrorResume(e -> {
                     log.error("Failed to attach Cloud Run ID token for audience {} — forwarding without auth", audience, e);
                     return chain.filter(exchange);
@@ -138,25 +149,39 @@ public class CloudRunAuthFilter implements GlobalFilter, Ordered {
         return kService != null && !kService.isBlank();
     }
 
+    /**
+     * Pull an ID token straight from the Cloud Run metadata server. The
+     * response body is the raw JWT (not JSON); we parse its {@code exp}
+     * claim locally so we know when to refresh.
+     */
     private static TokenFetcher defaultFetcher() {
-        return audience -> Mono.fromCallable(() -> {
-                    GoogleCredentials base = GoogleCredentials.getApplicationDefault();
-                    if (!(base instanceof IdTokenProvider provider)) {
-                        throw new IllegalStateException(
-                                "Application default credentials do not support ID token issuance: " + base.getClass());
-                    }
-                    IdTokenCredentials creds = IdTokenCredentials.newBuilder()
-                            .setIdTokenProvider(provider)
-                            .setTargetAudience(audience)
-                            .setOptions(Collections.singletonList(IdTokenProvider.Option.FORMAT_FULL))
-                            .build();
-                    creds.refresh();
-                    com.google.auth.oauth2.IdToken token = creds.getIdToken();
-                    Date exp = token.getExpirationTime();
-                    Instant expiry = exp != null ? exp.toInstant() : Instant.now().plus(Duration.ofMinutes(55));
-                    return new CachedToken(token.getTokenValue(), expiry);
-                })
-                .subscribeOn(Schedulers.boundedElastic());
+        WebClient client = WebClient.builder().build();
+        return audience -> client.get()
+                .uri(uriBuilder -> URI.create(METADATA_URL + "?audience=" + audience))
+                .header("Metadata-Flavor", "Google")
+                .retrieve()
+                .bodyToMono(String.class)
+                .map(rawJwt -> new CachedToken(rawJwt, extractExpiry(rawJwt)));
+    }
+
+    /** Decode a JWT's {@code exp} claim without verifying the signature. */
+    static Instant extractExpiry(String jwt) {
+        try {
+            String[] parts = jwt.split("\\.");
+            if (parts.length < 2) {
+                return Instant.now().plus(Duration.ofMinutes(55));
+            }
+            byte[] payload = Base64.getUrlDecoder().decode(parts[1]);
+            JsonNode node = MAPPER.readTree(payload);
+            long exp = node.path("exp").asLong(0);
+            if (exp == 0) {
+                return Instant.now().plus(Duration.ofMinutes(55));
+            }
+            return Instant.ofEpochSecond(exp);
+        } catch (Exception e) {
+            log.warn("Could not parse exp from ID token, defaulting to 55-minute lifetime", e);
+            return Instant.now().plus(Duration.ofMinutes(55));
+        }
     }
 
     /** Abstraction to make token fetching testable without hitting the metadata server. */
