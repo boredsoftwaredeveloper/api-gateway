@@ -155,9 +155,14 @@ public class CloudRunAuthFilter implements GlobalFilter, Ordered {
      * claim locally so we know when to refresh.
      */
     private static TokenFetcher defaultFetcher() {
+        return metadataFetcher(METADATA_URL);
+    }
+
+    /** Package-private so tests can point the fetcher at a local MockWebServer. */
+    static TokenFetcher metadataFetcher(String metadataUrl) {
         WebClient client = WebClient.builder().build();
         return audience -> client.get()
-                .uri(uriBuilder -> URI.create(METADATA_URL + "?audience=" + audience))
+                .uri(uriBuilder -> URI.create(metadataUrl + "?audience=" + audience))
                 .header("Metadata-Flavor", "Google")
                 .retrieve()
                 .bodyToMono(String.class)

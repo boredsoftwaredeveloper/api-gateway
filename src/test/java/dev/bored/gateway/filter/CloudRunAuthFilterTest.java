@@ -212,4 +212,49 @@ class CloudRunAuthFilterTest {
         assertThat(result).isAfter(now.plus(Duration.ofMinutes(50)));
         assertThat(result).isBefore(now.plus(Duration.ofMinutes(60)));
     }
+
+    @Test
+    void extractExpiry_missingExpClaim_fallsBackTo55Minutes() {
+        String payload = java.util.Base64.getUrlEncoder().withoutPadding()
+                .encodeToString("{\"iss\":\"x\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        String jwt = "h." + payload + ".s";
+        Instant now = Instant.now();
+        Instant result = CloudRunAuthFilter.extractExpiry(jwt);
+        assertThat(result).isAfter(now.plus(Duration.ofMinutes(50)));
+    }
+
+    @Test
+    void metadataFetcher_parsesTokenAndExpiryFromMetadataServer() throws Exception {
+        try (okhttp3.mockwebserver.MockWebServer server = new okhttp3.mockwebserver.MockWebServer()) {
+            server.start();
+            // Build a minimal JWT whose exp is in the far future.
+            String payload = java.util.Base64.getUrlEncoder().withoutPadding()
+                    .encodeToString("{\"exp\":2147483647}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            String jwt = "h." + payload + ".s";
+            server.enqueue(new okhttp3.mockwebserver.MockResponse().setResponseCode(200).setBody(jwt));
+
+            String metadataUrl = server.url("/identity").toString();
+            CloudRunAuthFilter.TokenFetcher fetcher = CloudRunAuthFilter.metadataFetcher(metadataUrl);
+
+            CloudRunAuthFilter.CachedToken token = fetcher.fetch("https://profile.run.app").block();
+            assertThat(token).isNotNull();
+            assertThat(token.token()).isEqualTo(jwt);
+            assertThat(token.expiry()).isEqualTo(Instant.ofEpochSecond(2_147_483_647L));
+
+            // Verify the call shape: GET with Metadata-Flavor header + audience query param.
+            okhttp3.mockwebserver.RecordedRequest recorded = server.takeRequest();
+            assertThat(recorded.getMethod()).isEqualTo("GET");
+            assertThat(recorded.getHeader("Metadata-Flavor")).isEqualTo("Google");
+            assertThat(recorded.getPath()).contains("audience=https://profile.run.app");
+        }
+    }
+
+    @Test
+    void productionConstructor_buildsWithoutCloudRunEnv() {
+        // With K_SERVICE unset the filter should build fine, stay disabled, and be a pure no-op.
+        CloudRunAuthFilter filter = new CloudRunAuthFilter((Boolean) null, null);
+        CapturingChain chain = new CapturingChain();
+        StepVerifier.create(filter.filter(exchangeWithRoute(PROFILE), chain)).verifyComplete();
+        assertThat(chain.captured.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION)).isNull();
+    }
 }
