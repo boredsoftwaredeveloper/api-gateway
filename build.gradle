@@ -76,6 +76,10 @@ dependencies {
     // Resilience4j (circuit breaker for gateway routes)
     implementation 'org.springframework.cloud:spring-cloud-starter-circuitbreaker-reactor-resilience4j'
 
+    // Google Auth — attaches Google-signed ID tokens on outbound calls to
+    // Cloud Run services that require invoker authentication.
+    implementation 'com.google.auth:google-auth-library-oauth2-http:1.28.0'
+
     // Testing
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.springframework.security:spring-security-test'
