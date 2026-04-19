@@ -76,6 +76,11 @@ dependencies {
     // Resilience4j (circuit breaker for gateway routes)
     implementation 'org.springframework.cloud:spring-cloud-starter-circuitbreaker-reactor-resilience4j'
 
+    // Reactive Redis (optional) — backs AuthRateLimitFilter when configured so
+    // rate limits survive across gateway instances. Falls back to in-memory
+    // sliding window when spring.data.redis.host is unset.
+    implementation 'org.springframework.boot:spring-boot-starter-data-redis-reactive'
+
     // Testing
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.springframework.security:spring-security-test'
