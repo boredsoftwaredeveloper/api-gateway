@@ -95,4 +95,4 @@ jobs:
             --concurrency=80 \
             --timeout=60 \
             --set-secrets=DB_USER=DB_USER:latest,DB_PASSWORD=DB_PASSWORD:latest,SUPABASE_URL=SUPABASE_URL:latest,SUPABASE_ANON_KEY=SUPABASE_ANON_KEY:latest \
-            --set-env-vars=LOG_FORMAT=ecs,PROFILE_SERVICE_URL=${{ steps.urls.outputs.PROFILE_URL }},REGRET_STREAM_URL=${{ steps.urls.outputs.REGRET_URL }}
+            --set-env-vars=LOG_FORMAT=ecs,SUPABASE_DB_HOST=aws-1-ap-southeast-2.pooler.supabase.com,PROFILE_SERVICE_URL=${{ steps.urls.outputs.PROFILE_URL }},REGRET_STREAM_URL=${{ steps.urls.outputs.REGRET_URL }}
