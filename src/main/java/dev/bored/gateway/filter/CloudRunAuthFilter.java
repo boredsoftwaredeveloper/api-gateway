@@ -97,16 +97,22 @@ public class CloudRunAuthFilter implements GlobalFilter, Ordered {
         // under X-Forwarded-Authorization BEFORE we overwrite Authorization
         // with the Google ID token. Downstream services read user identity
         // from the forwarded header; Authorization is consumed by Cloud Run.
+        //
+        // We ALWAYS set the forwarded header — even to empty — so the
+        // downstream BearerTokenResolver knows the gateway has handled auth
+        // and should ignore the Google token in Authorization. Anything
+        // less means unauthenticated GETs get their Google token validated
+        // against the Supabase JWKS and 401.
         String originalAuth = exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
+        String forwardedValue = originalAuth != null ? originalAuth : "";
 
         return fetchToken(audience)
                 .flatMap(token -> {
-                    ServerHttpRequest.Builder requestBuilder = exchange.getRequest().mutate()
-                            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token);
-                    if (originalAuth != null) {
-                        requestBuilder.header("X-Forwarded-Authorization", originalAuth);
-                    }
-                    return chain.filter(exchange.mutate().request(requestBuilder.build()).build());
+                    ServerHttpRequest mutated = exchange.getRequest().mutate()
+                            .header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                            .header("X-Forwarded-Authorization", forwardedValue)
+                            .build();
+                    return chain.filter(exchange.mutate().request(mutated).build());
                 })
                 .onErrorResume(e -> {
                     log.error("Failed to attach Cloud Run ID token for audience {} — forwarding without auth", audience, e);
