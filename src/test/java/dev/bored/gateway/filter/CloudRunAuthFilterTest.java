@@ -105,6 +105,33 @@ class CloudRunAuthFilterTest {
 
         assertThat(chain.captured.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION))
                 .isEqualTo("Bearer fake-token-for-" + PROFILE);
+        assertThat(chain.captured.getRequest().getHeaders().getFirst("X-Forwarded-Authorization"))
+                .isNull();
+    }
+
+    @Test
+    void cloudRunTarget_preservesOriginalAuthorizationInForwardedHeader() {
+        CloudRunAuthFilter filter = new CloudRunAuthFilter(
+                audience -> Mono.just(new CloudRunAuthFilter.CachedToken(
+                        "google-id-token", Instant.now().plus(Duration.ofMinutes(30)))),
+                true);
+
+        MockServerHttpRequest req = MockServerHttpRequest
+                .method(HttpMethod.GET, "/api/v1/profiles/1")
+                .header(HttpHeaders.AUTHORIZATION, "Bearer supabase-user-jwt")
+                .build();
+        MockServerWebExchange ex = MockServerWebExchange.from(req);
+        Route route = mock(Route.class);
+        when(route.getUri()).thenReturn(PROFILE);
+        ex.getAttributes().put(ServerWebExchangeUtils.GATEWAY_ROUTE_ATTR, route);
+
+        CapturingChain chain = new CapturingChain();
+        StepVerifier.create(filter.filter(ex, chain)).verifyComplete();
+
+        assertThat(chain.captured.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION))
+                .isEqualTo("Bearer google-id-token");
+        assertThat(chain.captured.getRequest().getHeaders().getFirst("X-Forwarded-Authorization"))
+                .isEqualTo("Bearer supabase-user-jwt");
     }
 
     @Test
