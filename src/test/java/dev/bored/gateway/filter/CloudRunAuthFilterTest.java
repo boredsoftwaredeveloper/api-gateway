@@ -94,7 +94,7 @@ class CloudRunAuthFilterTest {
     }
 
     @Test
-    void cloudRunTarget_attachesBearerToken() {
+    void cloudRunTarget_attachesBearerTokenAndEmptyForwardedHeaderWhenNoOriginalAuth() {
         CloudRunAuthFilter filter = new CloudRunAuthFilter(
                 audience -> Mono.just(new CloudRunAuthFilter.CachedToken(
                         "fake-token-for-" + audience, Instant.now().plus(Duration.ofMinutes(30)))),
@@ -105,8 +105,11 @@ class CloudRunAuthFilterTest {
 
         assertThat(chain.captured.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION))
                 .isEqualTo("Bearer fake-token-for-" + PROFILE);
+        // Forwarded header must be present (even empty) so the downstream
+        // service knows to ignore Authorization — otherwise it falls back
+        // and tries to validate the Google ID token as a Supabase JWT.
         assertThat(chain.captured.getRequest().getHeaders().getFirst("X-Forwarded-Authorization"))
-                .isNull();
+                .isEqualTo("");
     }
 
     @Test
