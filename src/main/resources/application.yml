@@ -9,6 +9,27 @@ spring:
   lifecycle:
     timeout-per-shutdown-phase: 30s
 
+  # ── Redis (optional) ─────────────────────────────────────────────
+  # When REDIS_HOST is set, AuthRateLimitFilter uses a distributed
+  # sliding-window limiter. When unset, Spring Boot's Redis auto-config
+  # is excluded and the filter falls back to its in-memory window so
+  # local dev works without running a Redis instance.
+  autoconfigure:
+    exclude: ${SPRING_AUTOCONFIGURE_EXCLUDE:org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration,org.springframework.boot.autoconfigure.data.redis.RedisReactiveAutoConfiguration}
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      ssl:
+        enabled: ${REDIS_SSL_ENABLED:false}
+      timeout: 2000ms
+      lettuce:
+        pool:
+          max-active: 4
+          max-idle: 4
+          min-idle: 0
+
   # ── Database (used by Flyway only — gateway has no JPA) ──────────
   datasource:
     url: jdbc:postgresql://${SUPABASE_DB_HOST:db.zasidonntwaimayumbks.supabase.co}:${SUPABASE_DB_PORT:5432}/${SUPABASE_DB_NAME:postgres}?sslmode=require

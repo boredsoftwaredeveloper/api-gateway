@@ -1,12 +1,16 @@
 package dev.bored.gateway.filter;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.core.Ordered;
+import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
+import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.web.server.MockServerWebExchange;
 import org.springframework.web.server.WebFilterChain;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
@@ -14,11 +18,13 @@ import java.lang.reflect.Field;
 import java.net.InetSocketAddress;
 import java.time.Instant;
 import java.util.Deque;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentLinkedDeque;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -28,13 +34,26 @@ import static org.mockito.Mockito.when;
 /**
  * Unit tests for {@link AuthRateLimitFilter}.
  * <p>
- * Covers: pass-through for non-auth paths, rate-limit trip at the configured
- * threshold, sliding-window expiry, client-IP extraction (direct + forwarded),
- * unbounded-growth eviction, and filter ordering.
+ * Covers both modes: in-memory fallback (no Redis bean) and Redis-backed
+ * sliding window (mocked {@link ReactiveStringRedisTemplate}).
  */
 class AuthRateLimitFilterTest {
 
-    private final AuthRateLimitFilter filter = new AuthRateLimitFilter();
+    @SuppressWarnings("unchecked")
+    private static ObjectProvider<ReactiveStringRedisTemplate> empty() {
+        ObjectProvider<ReactiveStringRedisTemplate> provider = mock(ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(null);
+        return provider;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static ObjectProvider<ReactiveStringRedisTemplate> with(ReactiveStringRedisTemplate template) {
+        ObjectProvider<ReactiveStringRedisTemplate> provider = mock(ObjectProvider.class);
+        when(provider.getIfAvailable()).thenReturn(template);
+        return provider;
+    }
+
+    private final AuthRateLimitFilter filter = new AuthRateLimitFilter(empty());
 
     private static WebFilterChain passThrough() {
         WebFilterChain chain = mock(WebFilterChain.class);
@@ -204,5 +223,70 @@ class AuthRateLimitFilterTest {
     @Test
     void getOrder_isHighestPrecedencePlusTen() {
         assertThat(filter.getOrder()).isEqualTo(Ordered.HIGHEST_PRECEDENCE + 10);
+    }
+
+    // ── Redis-backed mode ────────────────────────────────────────────────
+
+    @Test
+    void redisMode_allowsRequestWhenScriptReturnsOne() {
+        ReactiveStringRedisTemplate redis = mock(ReactiveStringRedisTemplate.class);
+        when(redis.execute(any(RedisScript.class), any(List.class), any(List.class)))
+                .thenReturn(Flux.just(1L));
+        AuthRateLimitFilter f = new AuthRateLimitFilter(with(redis));
+
+        WebFilterChain chain = passThrough();
+        StepVerifier.create(f.filter(authPostFrom("9.9.9.9"), chain)).verifyComplete();
+
+        verify(chain, times(1)).filter(any());
+    }
+
+    @Test
+    void redisMode_rejectsWithTooManyRequestsWhenScriptReturnsZero() {
+        ReactiveStringRedisTemplate redis = mock(ReactiveStringRedisTemplate.class);
+        when(redis.execute(any(RedisScript.class), any(List.class), any(List.class)))
+                .thenReturn(Flux.just(0L));
+        AuthRateLimitFilter f = new AuthRateLimitFilter(with(redis));
+
+        WebFilterChain chain = passThrough();
+        MockServerWebExchange ex = authPostFrom("9.9.9.9");
+        StepVerifier.create(f.filter(ex, chain)).verifyComplete();
+
+        assertThat(ex.getResponse().getStatusCode()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
+        assertThat(ex.getResponse().getHeaders().getFirst("Retry-After"))
+                .isEqualTo(String.valueOf(AuthRateLimitFilter.WINDOW_SECONDS));
+        verify(chain, never()).filter(any());
+    }
+
+    @Test
+    void redisMode_failsOpenOnRedisError() {
+        ReactiveStringRedisTemplate redis = mock(ReactiveStringRedisTemplate.class);
+        when(redis.execute(any(RedisScript.class), any(List.class), any(List.class)))
+                .thenReturn(Flux.error(new RuntimeException("redis unreachable")));
+        AuthRateLimitFilter f = new AuthRateLimitFilter(with(redis));
+
+        WebFilterChain chain = passThrough();
+        StepVerifier.create(f.filter(authPostFrom("9.9.9.9"), chain)).verifyComplete();
+
+        // Fail-open: the chain is still called despite the Redis error.
+        verify(chain, times(1)).filter(any());
+    }
+
+    @Test
+    void redisMode_skipsRedisForNonAuthPath() {
+        ReactiveStringRedisTemplate redis = mock(ReactiveStringRedisTemplate.class);
+        AuthRateLimitFilter f = new AuthRateLimitFilter(with(redis));
+
+        MockServerHttpRequest req = MockServerHttpRequest
+                .method(HttpMethod.GET, "/api/v1/profiles/1")
+                .remoteAddress(new InetSocketAddress("1.2.3.4", 0))
+                .build();
+        MockServerWebExchange ex = MockServerWebExchange.from(req);
+
+        WebFilterChain chain = passThrough();
+        StepVerifier.create(f.filter(ex, chain)).verifyComplete();
+
+        // No Redis call for non-auth paths.
+        verify(redis, never()).execute(any(RedisScript.class), any(List.class), any(List.class));
+        verify(chain, times(1)).filter(any());
     }
 }
